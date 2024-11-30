@@ -2,7 +2,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 import base64
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import os
 from werkzeug.utils import secure_filename
 from flask_mysqldb import MySQL
@@ -29,39 +29,57 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    username = data.get('username')
+    encrypted_username = data.get('username')
     password = data.get('password')
 
-    # Encrypt username and hash password
-    encrypted_username = base64.b64encode(cipher.encrypt(username.encode())).decode()
+    if not encrypted_username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    # Hash password and store in the database
     hashed_password = generate_password_hash(password)
+
+    # You can either get name from the request or set it to a default
+    name = "test"  # You can customize this as needed or add it to the request
 
     # Save to database
     conn = mysql.connection
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO users (name, username, password, email) VALUES (%s, %s, %s, %s)", ("test", encrypted_username, hashed_password, "test@example.com"))
+    cursor.execute("INSERT INTO users (name, username, password, email) VALUES (%s, %s, %s, %s)",
+                   (name, encrypted_username, hashed_password, "test@example.com"))
     conn.commit()
+
     return jsonify({"message": "User registered successfully"}), 201
+
 
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    username = data.get('username')
+    encrypted_username = data.get('username')
     password = data.get('password')
 
-    # Encrypt username to compare with DB
-    encrypted_username = base64.b64encode(cipher.encrypt(username.encode())).decode()
+    if not encrypted_username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
 
-    # Fetch user data
+    # Decrypt the username before comparing
+    decrypted_username = cipher.decrypt(base64.b64decode(encrypted_username)).decode()
+
+    # Fetch user data from the database
     conn = mysql.connection
     cursor = conn.cursor()
-    cursor.execute("SELECT password FROM users WHERE username = %s", (encrypted_username))
+    cursor.execute("SELECT username, password FROM users WHERE username = %s", (encrypted_username,))
     result = cursor.fetchone()
 
-    if result and check_password_hash(result[0], password):
-        return jsonify({"message": "Login successful"}), 200
+    if result:
+        db_encrypted_username, db_hashed_password = result
+
+        # Check if the decrypted username matches the stored encrypted username
+        if db_encrypted_username == encrypted_username and check_password_hash(db_hashed_password, password):
+            return jsonify({"message": "Login successful"}), 200
+        else:
+            return jsonify({"error": "Invalid credentials"}), 401
     else:
-        return jsonify({"error": "Invalid credentials"}), 401
+        return jsonify({"error": "User not found"}), 404
+
 
 @app.route('/get_public_key', methods=['GET'])
 def get_public_key():
@@ -94,9 +112,20 @@ def upload_audio():
     if creator_id:
         path = app.config['UPLOAD_FOLDER'] + created_by + "/"
         os.makedirs(path, exist_ok=True)
-        file_path = os.path.join(path, "audio.mp3")
+        filename = secure_filename(name + ".mp3")
+        i = 1
+        while True:
+            if i > 100:
+                return jsonify({"error": "Invalid name"}), 400
+            if os.path.exists(os.path.join(path, filename)):
+                filename = secure_filename(name) + f"({i}).mp3"
+                i += 1
+            else:
+                file_path = os.path.join(path, filename)
+                break
     else:
         return jsonify({"error": "User not found"}), 404
+
     file.save(file_path)
 
     # Save metadata to the database
@@ -109,6 +138,45 @@ def upload_audio():
     conn.commit()
 
     return jsonify({"message": "File uploaded successfully", "file_path": file_path}), 201
+
+
+@app.route('/get_all_content', methods=['GET'])
+def get_all_content():
+    conn = mysql.connection
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, created_by, creator_type, file_path FROM content")
+    results = cursor.fetchall()
+
+    # Format results into a list of dictionaries
+    content_list = []
+    for row in results:
+        content = {
+            "id": row[0],
+            "name": row[1],
+            "created_by": row[2],
+            "creator_type": row[3],
+            "file_path": row[4]
+        }
+        content_list.append(content)
+
+    return jsonify(content_list), 200
+
+
+@app.route('/download_audio/<int:content_id>', methods=['GET'])
+def download_audio(content_id):
+    conn = mysql.connection
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_path FROM content WHERE id = %s", (content_id,))
+    result = cursor.fetchone()
+
+    if result:
+        file_path = result[0]
+        if os.path.exists(file_path):
+            return send_file(file_path, as_attachment=True)
+        else:
+            return jsonify({"error": "File not found"}), 404
+    else:
+        return jsonify({"error": "Content not found"}), 404
 
 
 if __name__ == '__main__':
