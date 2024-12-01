@@ -34,7 +34,9 @@ def download_audio(content_id):
     if result:
         file_path = result[0]
         if os.path.exists(file_path):
-            return send_file(file_path, as_attachment=True)
+            return send_file(f"../{file_path}", as_attachment=True)
+        else:
+            return jsonify({"error": "Content not found"}), 404
     return jsonify({"error": "Content not found"}), 404
 
 @content_bp.route("/refresh", methods=["GET"])
