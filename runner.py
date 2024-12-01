@@ -7,6 +7,7 @@ import os
 from werkzeug.utils import secure_filename
 from flask_mysql_connector import MySQL
 
+
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.config['UPLOAD_FOLDER'] = 'uploads/'
@@ -19,6 +20,7 @@ private_key = RSA.generate(2048)
 public_key = private_key.publickey()
 cipher = PKCS1_OAEP.new(private_key)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -55,9 +57,9 @@ def login():
     result = cursor.fetchone()
     cursor.close()
     if result:
-        id, username, db_hashed_password = result
+        user_id, username, db_hashed_password = result
         if username == decrypted_username and check_password_hash(db_hashed_password, decrypted_password):
-            return jsonify({"message": "Login successful", "id": id}), 200
+            return jsonify({"message": "Login successful", "id": user_id}), 200
         else:
             return jsonify({"error": "Invalid credentials"}), 401
     else:
